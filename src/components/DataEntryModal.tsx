@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react';
 import { BodyMetrics } from '../types';
 import { Camera, X, Loader2, Edit3, Image as ImageIcon } from 'lucide-react';
 import { extractDataFromImage } from '../services/geminiService';
-import jsQR from 'jsqr';
 
 interface DataEntryModalProps {
   onClose: () => void;
@@ -38,72 +37,37 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
     });
   };
 
+  // ✅ 只有圖片 → Gemini OCR，完全不處理 QRcode
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setLoading(true);
+
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64String = reader.result as string;
 
       try {
-        // =====================
-        // 🔍 先嘗試 QR Code 識別
-        // =====================
-        const img = new Image();
-        img.src = base64String;
-        img.onload = async () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) return;
+        // 把 dataURL 的 "data:image/xxx;base64," 拿掉，只留純 base64 給 Gemini
+        const pureBase64 = base64String.split(',')[1];
 
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, img.width, img.height);
-          const qrCode = jsQR(imageData.data, img.width, img.height);
+        const extracted = await extractDataFromImage(pureBase64);
 
-          if (qrCode) {
-            console.log('QR Detected:', qrCode.data);
+        setFormData(prev => ({
+          ...prev,
+          weight: extracted.weight?.toString() || prev.weight,
+          skeletalMuscleMass: extracted.skeletalMuscleMass?.toString() || prev.skeletalMuscleMass,
+          bodyFatMass: extracted.bodyFatMass?.toString() || prev.bodyFatMass,
+          percentBodyFat: extracted.percentBodyFat?.toString() || prev.percentBodyFat,
+        }));
 
-            try {
-              const parsed = JSON.parse(qrCode.data);
-
-              setFormData(prev => ({
-                ...prev,
-                weight: parsed.weight?.toString() || prev.weight,
-                skeletalMuscleMass: parsed.skeletalMuscleMass?.toString() || prev.skeletalMuscleMass,
-                bodyFatMass: parsed.bodyFatMass?.toString() || prev.bodyFatMass,
-                percentBodyFat: parsed.percentBodyFat?.toString() || prev.percentBodyFat,
-              }));
-
-              setMode('manual');
-              setLoading(false);
-              return;
-            } catch {
-              console.log('QR decoded but not valid JSON → fallback to OCR');
-            }
-          }
-
-          // =====================
-          // 🧠 Fallback → OCR 使用 Gemini
-          // =====================
-          const extracted = await extractDataFromImage(base64String.split(',')[1]);
-          setFormData(prev => ({
-            ...prev,
-            weight: extracted.weight?.toString() || prev.weight,
-            skeletalMuscleMass: extracted.skeletalMuscleMass?.toString() || prev.skeletalMuscleMass,
-            bodyFatMass: extracted.bodyFatMass?.toString() || prev.bodyFatMass,
-            percentBodyFat: extracted.percentBodyFat?.toString() || prev.percentBodyFat,
-          }));
-
-          setMode('manual');
-          setLoading(false);
-        };
+        // 自動切到手動模式，方便微調數字
+        setMode('manual');
       } catch (err) {
         console.error(err);
         alert('圖片辨識失敗，請手動輸入。');
+      } finally {
         setLoading(false);
       }
     };
@@ -122,11 +86,15 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
   return (
     <div className="fixed inset-0 bg-pop-dark/40 backdrop-blur-md flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
       <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-3xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10 sm:zoom-in-95 duration-300">
-
         {/* Header */}
         <div className="p-6 pb-2 flex justify-between items-center">
-          <h2 className="text-2xl font-display font-bold text-pop-dark">New Record</h2>
-          <button onClick={onClose} className="bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors">
+          <h2 className="text-2xl font-display font-bold text-pop-dark">
+            New Record
+          </h2>
+          <button
+            onClick={onClose}
+            className="bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors"
+          >
             <X size={20} className="text-pop-dark" />
           </button>
         </div>
@@ -136,18 +104,22 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
           <div className="flex bg-gray-100 p-1 rounded-2xl">
             <button
               onClick={() => setMode('scan')}
-              className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300 flex items-center justify-center gap-2
-                ${mode === 'scan' ? 'bg-pop-dark text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}
-              `}
+              className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${
+                mode === 'scan'
+                  ? 'bg-pop-dark text-white shadow-md'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
             >
               <Camera size={18} strokeWidth={2.5} />
               Scan
             </button>
             <button
               onClick={() => setMode('manual')}
-              className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300 flex items-center justify-center gap-2
-                ${mode === 'manual' ? 'bg-pop-dark text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}
-              `}
+              className={`flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${
+                mode === 'manual'
+                  ? 'bg-pop-dark text-white shadow-md'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
             >
               <Edit3 size={18} strokeWidth={2.5} />
               Manual
@@ -159,7 +131,6 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
         <div className="p-6 pt-2 h-[450px] overflow-y-auto">
           {mode === 'scan' ? (
             <div className="h-full flex flex-col justify-center items-center gap-6">
-
               {/* 拍照 */}
               <div
                 onClick={triggerCamera}
@@ -167,16 +138,29 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
               >
                 {loading ? (
                   <>
-                    <Loader2 className="animate-spin text-pop-blue mb-4" size={48} />
-                    <span className="font-bold text-pop-blue">Processing Image...</span>
+                    <Loader2
+                      className="animate-spin text-pop-blue mb-4"
+                      size={48}
+                    />
+                    <span className="font-bold text-pop-blue">
+                      Processing Image...
+                    </span>
                   </>
                 ) : (
                   <>
                     <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-lg mb-4 group-hover:scale-110 transition-transform duration-300">
-                      <Camera size={32} className="text-pop-blue" strokeWidth={2.5} />
+                      <Camera
+                        size={32}
+                        className="text-pop-blue"
+                        strokeWidth={2.5}
+                      />
                     </div>
-                    <h3 className="text-lg font-bold text-pop-dark mb-1">Take a Photo</h3>
-                    <p className="text-gray-400 text-sm font-semibold">Result Screen / QR Code</p>
+                    <h3 className="text-lg font-bold text-pop-dark mb-1">
+                      Take a Photo
+                    </h3>
+                    <p className="text-gray-400 text-sm font-semibold">
+                      Result Screen / Report
+                    </p>
                   </>
                 )}
               </div>
@@ -192,28 +176,69 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
                 <span>選擇相簿照片</span>
               </button>
 
-              <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} className="hidden" onChange={handleFileChange} />
-              <input type="file" accept="image/*" ref={galleryInputRef} className="hidden" onChange={handleFileChange} />
-
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                ref={cameraInputRef}
+                className="hidden"
+                onChange={handleFileChange}
+              />
+              <input
+                type="file"
+                accept="image/*"
+                ref={galleryInputRef}
+                className="hidden"
+                onChange={handleFileChange}
+              />
             </div>
           ) : (
-
             // Manual Form
             <form onSubmit={handleSubmit} className="space-y-4 pt-2">
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">Date</label>
-                <input type="date" name="date" required value={formData.date} onChange={handleInputChange} className="w-full bg-transparent text-lg font-bold text-pop-dark outline-none" />
+                <label className="block text-xs font-bold text-gray-400 uppercase mb-2 ml-1">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  name="date"
+                  required
+                  value={formData.date}
+                  onChange={handleInputChange}
+                  className="w-full bg-transparent text-lg font-bold text-pop-dark outline-none"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                {[ 
-                  { label: 'Weight (kg)', name: 'weight', color: 'bg-pop-lime/30 focus-within:bg-pop-lime/50' },
-                  { label: 'Muscle (kg)', name: 'skeletalMuscleMass', color: 'bg-pop-blue/30 focus-within:bg-pop-blue/50' },
-                  { label: 'Fat Mass (kg)', name: 'bodyFatMass', color: 'bg-pop-pink/30 focus-within:bg-pop-pink/50' },
-                  { label: 'Body Fat (%)', name: 'percentBodyFat', color: 'bg-gray-100 focus-within:bg-gray-200' }
+                {[
+                  {
+                    label: 'Weight (kg)',
+                    name: 'weight',
+                    color: 'bg-pop-lime/30 focus-within:bg-pop-lime/50',
+                  },
+                  {
+                    label: 'Muscle (kg)',
+                    name: 'skeletalMuscleMass',
+                    color: 'bg-pop-blue/30 focus-within:bg-pop-blue/50',
+                  },
+                  {
+                    label: 'Fat Mass (kg)',
+                    name: 'bodyFatMass',
+                    color: 'bg-pop-pink/30 focus-within:bg-pop-pink/50',
+                  },
+                  {
+                    label: 'Body Fat (%)',
+                    name: 'percentBodyFat',
+                    color: 'bg-gray-100 focus-within:bg-gray-200',
+                  },
                 ].map(field => (
-                  <div key={field.name} className={`${field.color} p-4 rounded-2xl transition-all duration-300 focus-within:scale-[1.02]`}>
-                    <label className="block text-xs font-bold text-pop-dark/70 uppercase mb-1">{field.label}</label>
+                  <div
+                    key={field.name}
+                    className={`${field.color} p-4 rounded-2xl transition-all duration-300 focus-within:scale-[1.02]`}
+                  >
+                    <label className="block text-xs font-bold text-pop-dark/70 uppercase mb-1">
+                      {field.label}
+                    </label>
                     <input
                       type="number"
                       step="0.1"
@@ -230,7 +255,10 @@ const DataEntryModal: React.FC<DataEntryModalProps> = ({ onClose, onSave }) => {
               </div>
 
               <div className="pt-4 pb-2">
-                <button type="submit" className="w-full bg-pop-dark text-white py-4 rounded-2xl font-bold text-lg hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-pop-dark/20">
+                <button
+                  type="submit"
+                  className="w-full bg-pop-dark text-white py-4 rounded-2xl font-bold text-lg hover:scale-[1.02] active:scale-[0.98] transition-all shadow-xl shadow-pop-dark/20"
+                >
                   Save Entry
                 </button>
               </div>
