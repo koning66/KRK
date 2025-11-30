@@ -150,11 +150,10 @@ export async function extractDataFromImage(
   }
 }
 
-// 🔎 Trend Insight Analysis (English version, allow analysis with 1–2 records)
+// 🔎 Trend Insight Analysis (shorter English coach style)
 export const analyzeTrends = async (
   history: BodyMetrics[]
 ): Promise<AIAnalysis> => {
-  // ⬅️ 只有「完全沒有資料」才用預設文字
   if (!history || history.length === 0) {
     return {
       summary:
@@ -162,11 +161,10 @@ export const analyzeTrends = async (
       muscleTrend: "stable",
       fatTrend: "stable",
       recommendation:
-        "Take your first measurement and then keep tracking regularly to see your progress over time.",
+        "Take your first measurement and keep tracking regularly to see your progress over time.",
     };
   }
 
-  // 沒 API key：不要丟錯，回穩定預設文案（UI 不會壞）
   if (!apiKey) {
     return {
       summary:
@@ -174,46 +172,56 @@ export const analyzeTrends = async (
       muscleTrend: "stable",
       fatTrend: "stable",
       recommendation:
-        "Continue regular tracking. More records will reveal better long-term patterns.",
+        "Continue regular tracking. More records will reveal clearer long-term patterns.",
     };
   }
 
   try {
     const url = `https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-
-    // 和之前一樣，只餵關鍵欄位
     const formattedHistory = history.map((h) => ({
       date: h.date,
       weight: h.weight,
       muscle: h.skeletalMuscleMass,
       fat: h.bodyFatMass,
+      bodyFatPercent: h.percentBodyFat,
     }));
 
     const prompt = `
-You are a fitness coach specializing in body composition improvement.
+You are a friendly fitness coach.
 
-Analyze the following chronological measurement data:
+Analyze the following chronological body-composition data:
 ${JSON.stringify(formattedHistory, null, 2)}
 
-Your task:
-1. Identify trends for weight, skeletal muscle mass, and fat mass (increasing, decreasing, or roughly stable).
-2. Write a short, friendly summary in English (maximum 120 words), speaking directly to the user.
-3. Provide a practical, actionable recommendation (e.g., training, nutrition, lifestyle).
-4. Output ONLY JSON (no markdown, no extra text).
+Your job:
 
-Format exactly as:
+1. Give a **short summary** of the main trend for weight, muscle and fat.
+   - Use **at most 2 sentences**
+   - **Maximum 60 words**
+   - English only.
+
+2. Give a **short, practical recommendation**.
+   - At most 1–2 sentences.
+   - **Maximum 35 words**.
+   - Focus on clear actions (training, nutrition, lifestyle).
+
+3. Classify:
+   - "muscleTrend": "up" | "down" | "stable"
+   - "fatTrend": "up" | "down" | "stable"
+
+Output **ONLY JSON**, no markdown, no explanation.
+
+Format exactly:
+
 {
-  "summary": "...",
+  "summary": "short English summary...",
   "muscleTrend": "up | down | stable",
   "fatTrend": "up | down | stable",
-  "recommendation": "..."
+  "recommendation": "short English recommendation..."
 }
 `;
 
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-    };
+    const body = { contents: [{ parts: [{ text: prompt }] }] };
 
     const res = await fetch(url, {
       method: "POST",
@@ -230,7 +238,7 @@ Format exactly as:
       );
       return {
         summary:
-          "AI could not analyze the data this time, but all your records are safely stored.",
+          "AI could not analyze the data this time, but your records are safely stored.",
         muscleTrend: "stable",
         fatTrend: "stable",
         recommendation:
@@ -241,6 +249,7 @@ Format exactly as:
     const json = await res.json();
     const rawText =
       json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+
     console.log("🔍 Gemini raw response (analyzeTrends):", rawText);
 
     const start = rawText.indexOf("{");
@@ -252,11 +261,10 @@ Format exactly as:
     const snippet = rawText.slice(start, end + 1);
     const parsed = JSON.parse(snippet);
 
-    // 簡單補預設值，避免少欄位讓 UI 掛掉
     return {
       summary:
         parsed.summary ||
-        "AI analyzed your history but did not provide a detailed summary this time.",
+        "AI analyzed your history but did not provide a clear summary this time.",
       muscleTrend: parsed.muscleTrend || "stable",
       fatTrend: parsed.fatTrend || "stable",
       recommendation:
@@ -271,7 +279,7 @@ Format exactly as:
       muscleTrend: "stable",
       fatTrend: "stable",
       recommendation:
-        "You can try running the analysis again later, or simply watch your charts for overall direction.",
+        "You can try running the analysis again later, or watch your charts for overall direction.",
     };
   }
 };
